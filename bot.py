@@ -6,7 +6,10 @@ import json
 import os
 import tempfile
 import requests
-import base64
+import re
+from PIL import Image
+import pytesseract
+import io
 
 # ============================================================
 # CONFIGURATION
@@ -34,43 +37,18 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(SHEET_ID).sheet1
 
 # ============================================================
-# ANALYSE FACTURE AVEC GOOGLE VISION
+# ANALYSE FACTURE AVEC TESSERACT
 # ============================================================
-def analyser_facture_vision(image_bytes):
-    scopes_vision = ["https://www.googleapis.com/auth/cloud-vision"]
-    creds_vision = ServiceAccountCredentials.from_json_keyfile_name(temp_credentials_path, scopes_vision)
-    creds_vision.get_access_token()
-    access_token = creds_vision.access_token
-
-    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-
-    url = "https://vision.googleapis.com/v1/images:annotate"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    body = {
-        "requests": [{
-            "image": {"content": image_base64},
-            "features": [{"type": "TEXT_DETECTION"}]
-        }]
-    }
-
-    response = requests.post(url, headers=headers, json=body)
-    print(f"Vision API status: {response.status_code}")
-    print(f"Vision API response: {response.text[:500]}")
-    
-    result = response.json()
-
-    if "responses" in result and result["responses"]:
-        texte = result["responses"][0].get("fullTextAnnotation", {}).get("text", "")
-        print(f"Texte extrait: {texte[:200]}")
-        return texte
-    return ""
+def analyser_image_tesseract(image_bytes):
+    """Extrait le texte d'une image avec Tesseract OCR"""
+    image = Image.open(io.BytesIO(image_bytes))
+    # OCR en français et anglais
+    texte = pytesseract.image_to_string(image, lang='fra+eng')
+    print(f"Texte extrait: {texte[:300]}")
+    return texte
 
 def extraire_donnees_facture(texte):
-    import re
-    
+    """Extrait les données importantes du texte de la facture"""
     donnees = {
         "fournisseur": "",
         "client": "",
@@ -93,12 +71,12 @@ def extraire_donnees_facture(texte):
             if match:
                 donnees["numero_facture"] = match.group()
 
-        if any(x in ligne_lower for x in ["ttc", "total ttc", "net à payer", "total tva"]):
+        if any(x in ligne_lower for x in ["ttc", "total ttc", "net à payer"]):
             match = re.search(r'[\d\s]+[,.]?\d*', ligne)
             if match:
                 donnees["montant_ttc"] = match.group().strip()
 
-        if any(x in ligne_lower for x in ["ht", "hors taxe", "base ht", "total ht"]):
+        if any(x in ligne_lower for x in [" ht", "hors taxe", "base ht", "total ht"]):
             match = re.search(r'[\d\s]+[,.]?\d*', ligne)
             if match:
                 donnees["montant_ht"] = match.group().strip()
@@ -138,15 +116,15 @@ bot = telebot.TeleBot(TOKEN)
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, 
+    bot.reply_to(message,
         "👋 Bonjour ! Je suis ton bot de gestion de factures.\n\n"
-        "📸 Envoie-moi une photo d'une facture !"
+        "📸 Envoie-moi une photo d'une facture et je vais extraire toutes les informations !"
     )
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     bot.reply_to(message, "📸 Photo reçue ! Analyse en cours... ⏳")
-    
+
     try:
         file_id = message.photo[-1].file_id
         file_info = bot.get_file(file_id)
@@ -154,10 +132,10 @@ def handle_photo(message):
         image_bytes = requests.get(file_url).content
         print(f"Image téléchargée: {len(image_bytes)} bytes")
 
-        texte = analyser_facture_vision(image_bytes)
-        
-        if not texte:
-            bot.reply_to(message, "❌ Je n'ai pas pu lire le texte. Erreur Vision API — vérifie les logs Railway.")
+        texte = analyser_image_tesseract(image_bytes)
+
+        if not texte.strip():
+            bot.reply_to(message, "❌ Je n'ai pas pu lire le texte. Essaie avec une photo plus claire.")
             return
 
         donnees = extraire_donnees_facture(texte)
@@ -177,7 +155,7 @@ def handle_photo(message):
         ])
 
         bot.reply_to(message,
-            f"✅ Facture enregistrée !\n\n"
+            f"✅ Facture enregistrée dans Google Sheets !\n\n"
             f"🏢 Fournisseur: {donnees['fournisseur']}\n"
             f"👤 Client: {donnees['client']}\n"
             f"🔢 N° Facture: {donnees['numero_facture']}\n"
@@ -188,7 +166,7 @@ def handle_photo(message):
 
     except Exception as e:
         print(f"ERREUR: {str(e)}")
-        bot.reply_to(message, f"❌ Erreur détaillée: {str(e)}")
+        bot.reply_to(message, f"❌ Erreur: {str(e)}")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
