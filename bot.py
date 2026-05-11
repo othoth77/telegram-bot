@@ -42,8 +42,15 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 def analyser_image_tesseract(image_bytes):
     image = Image.open(io.BytesIO(image_bytes))
     texte = pytesseract.image_to_string(image, lang='fra+eng')
-    print(f"Texte extrait: {texte[:300]}")
+    print(f"Texte extrait:\n{texte}")
     return texte
+
+def extraire_montant(ligne):
+    """Extrait un montant numérique d'une ligne (gère virgule et point)"""
+    match = re.search(r'(\d[\d\s]*[.,]\d{2}|\d+)', ligne)
+    if match:
+        return match.group().strip().replace(' ', '')
+    return ""
 
 def extraire_donnees_facture(texte):
     donnees = {
@@ -59,50 +66,64 @@ def extraire_donnees_facture(texte):
     }
 
     lignes = texte.split('\n')
+    lignes_propres = [l.strip() for l in lignes if l.strip()]
 
-    for i, ligne in enumerate(lignes):
-        ligne_lower = ligne.lower()
+    for i, ligne in enumerate(lignes_propres):
+        ll = ligne.lower()
 
-        if any(x in ligne_lower for x in ["facture n", "invoice n", "n° facture", "fact n", "facture:"]):
-            match = re.search(r'[\w\-\/]+\d+[\w\-\/]*', ligne)
-            if match:
+        # --- Numéro de facture ---
+        if re.search(r'facture\s*n[°o]?\.?\s*[\w\-\/]+', ll):
+            match = re.search(r'(\d{3,}[\/\-]\d{4}|\d{4,})', ligne)
+            if match and not donnees["numero_facture"]:
                 donnees["numero_facture"] = match.group()
 
-        if any(x in ligne_lower for x in ["ttc", "total ttc", "net à payer"]):
-            match = re.search(r'[\d\s]+[,.]?\d*', ligne)
-            if match:
-                donnees["montant_ttc"] = match.group().strip()
+        # --- Total HT (gère "Total NET HT", "Total HT", "Montant HT") ---
+        if re.search(r'(total\s*net\s*ht|total\s*ht|montant\s*ht|net\s*ht)', ll):
+            montant = extraire_montant(ligne)
+            if montant and not donnees["montant_ht"]:
+                donnees["montant_ht"] = montant
 
-        if any(x in ligne_lower for x in [" ht", "hors taxe", "base ht", "total ht"]):
-            match = re.search(r'[\d\s]+[,.]?\d*', ligne)
-            if match:
-                donnees["montant_ht"] = match.group().strip()
+        # --- Total TTC ---
+        if re.search(r'(total\s*ttc|net\s*[àa]\s*payer|ttc\s*:)', ll):
+            montant = extraire_montant(ligne)
+            if montant and not donnees["montant_ttc"]:
+                donnees["montant_ttc"] = montant
 
-        if any(x in ligne_lower for x in ["tva", "taxe", "vat"]):
-            match_pct = re.search(r'(\d+)\s*%', ligne)
-            if match_pct:
-                donnees["tva_pct"] = match_pct.group(1)
-            match_montant = re.search(r'[\d\s]+[,.]?\d*', ligne)
-            if match_montant and not donnees["montant_tva"]:
-                donnees["montant_tva"] = match_montant.group().strip()
+        # --- TVA ---
+        if re.search(r'\btva\b', ll):
+            pct = re.search(r'(\d{1,2})\s*%', ligne)
+            if pct and not donnees["tva_pct"]:
+                donnees["tva_pct"] = pct.group(1)
+            montant = extraire_montant(ligne)
+            if montant and not donnees["montant_tva"]:
+                donnees["montant_tva"] = montant
 
-        if any(x in ligne_lower for x in ["client:", "bill to", "facturer à", "nom client"]):
-            if i + 1 < len(lignes):
-                donnees["client"] = lignes[i + 1].strip()
+        # --- Client ---
+        if re.search(r'(association|client\s*:|bill\s*to|facturer\s*[àa])', ll):
+            if not donnees["client"]:
+                donnees["client"] = ligne.strip()
 
-        if "eur" in ligne_lower or "€" in ligne:
-            donnees["devise"] = "EUR"
-        elif "usd" in ligne_lower or "$" in ligne:
-            donnees["devise"] = "USD"
-        elif "tnd" in ligne_lower or "dt" in ligne_lower:
+        # --- Devise ---
+        if 'tnd' in ll or 'dt' in ll or 'dinar' in ll:
             donnees["devise"] = "TND"
+        elif 'eur' in ll or '€' in ligne:
+            donnees["devise"] = "EUR"
 
-    for ligne in lignes[:5]:
-        if ligne.strip():
-            donnees["fournisseur"] = ligne.strip()
+    # --- Fournisseur = première ligne non vide significative ---
+    for ligne in lignes_propres[:6]:
+        if len(ligne) > 2 and not re.match(r'^\d+$', ligne) and 'facture' not in ligne.lower():
+            donnees["fournisseur"] = ligne
             break
 
-    donnees["description"] = texte[:100].replace('\n', ' ').strip()
+    # --- Description = première ligne produit/service ---
+    for ligne in lignes_propres:
+        if re.search(r'(transport|service|prestation|fourniture|livraison)', ligne.lower()):
+            donnees["description"] = ligne[:100]
+            break
+
+    if not donnees["description"]:
+        donnees["description"] = ' '.join(lignes_propres[:3])[:120]
+
     return donnees
 
 # ============================================================
@@ -128,9 +149,6 @@ def handle_photo(message):
         image_bytes = requests.get(file_url).content
 
         texte = analyser_image_tesseract(image_bytes)
-
-        # Mode debug : affiche le texte brut
-        bot.reply_to(message, f"📝 Texte brut détecté :\n\n{texte[:600]}")
 
         if not texte.strip():
             bot.reply_to(message, "❌ Je n'ai pas pu lire le texte. Essaie avec une photo plus claire.")
@@ -166,8 +184,7 @@ def handle_photo(message):
         print(f"ERREUR: {str(e)}")
         bot.reply_to(message, f"❌ Erreur: {str(e)}")
 
-# ✅ CORRECTION : message.text is not None (au lieu de True)
-# Empêche ce handler de capturer les photos
+# ✅ Seulement les messages texte (pas les photos)
 @bot.message_handler(func=lambda message: message.text is not None)
 def handle_message(message):
     date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
