@@ -17,9 +17,6 @@ import io
 TOKEN = "7598630137:AAEMFZDHazIVeTRbRO7I6Iw8gwQ_hVTzf-g"
 SHEET_ID = "1vcTv6AcNsHXUg8J0j_lJBBLL1053aIxO5Hua9Rm8-jQ"
 
-# Chemin Tesseract pour Railway/Linux
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
-
 # ============================================================
 # CONNEXION GOOGLE SHEETS
 # ============================================================
@@ -129,7 +126,6 @@ def handle_photo(message):
         file_info = bot.get_file(file_id)
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
         image_bytes = requests.get(file_url).content
-        print(f"Image téléchargée: {len(image_bytes)} bytes")
 
         texte = analyser_image_tesseract(image_bytes)
 
