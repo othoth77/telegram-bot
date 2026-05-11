@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 gspread
 oauth2client
+requests
+google-auth
