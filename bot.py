@@ -129,6 +129,9 @@ def handle_photo(message):
 
         texte = analyser_image_tesseract(image_bytes)
 
+        # Mode debug : affiche le texte brut
+        bot.reply_to(message, f"📝 Texte brut détecté :\n\n{texte[:600]}")
+
         if not texte.strip():
             bot.reply_to(message, "❌ Je n'ai pas pu lire le texte. Essaie avec une photo plus claire.")
             return
@@ -163,7 +166,9 @@ def handle_photo(message):
         print(f"ERREUR: {str(e)}")
         bot.reply_to(message, f"❌ Erreur: {str(e)}")
 
-@bot.message_handler(func=lambda message: True)
+# ✅ CORRECTION : message.text is not None (au lieu de True)
+# Empêche ce handler de capturer les photos
+@bot.message_handler(func=lambda message: message.text is not None)
 def handle_message(message):
     date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     utilisateur = message.from_user.first_name
