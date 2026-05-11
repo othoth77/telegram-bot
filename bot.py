@@ -17,6 +17,9 @@ import io
 TOKEN = "7598630137:AAEMFZDHazIVeTRbRO7I6Iw8gwQ_hVTzf-g"
 SHEET_ID = "1vcTv6AcNsHXUg8J0j_lJBBLL1053aIxO5Hua9Rm8-jQ"
 
+# Chemin Tesseract pour Railway/Linux
+pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+
 # ============================================================
 # CONNEXION GOOGLE SHEETS
 # ============================================================
@@ -40,15 +43,12 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 # ANALYSE FACTURE AVEC TESSERACT
 # ============================================================
 def analyser_image_tesseract(image_bytes):
-    """Extrait le texte d'une image avec Tesseract OCR"""
     image = Image.open(io.BytesIO(image_bytes))
-    # OCR en français et anglais
     texte = pytesseract.image_to_string(image, lang='fra+eng')
     print(f"Texte extrait: {texte[:300]}")
     return texte
 
 def extraire_donnees_facture(texte):
-    """Extrait les données importantes du texte de la facture"""
     donnees = {
         "fournisseur": "",
         "client": "",
@@ -106,7 +106,6 @@ def extraire_donnees_facture(texte):
             break
 
     donnees["description"] = texte[:100].replace('\n', ' ').strip()
-
     return donnees
 
 # ============================================================
@@ -118,7 +117,7 @@ bot = telebot.TeleBot(TOKEN)
 def start(message):
     bot.reply_to(message,
         "👋 Bonjour ! Je suis ton bot de gestion de factures.\n\n"
-        "📸 Envoie-moi une photo d'une facture et je vais extraire toutes les informations !"
+        "📸 Envoie-moi une photo d'une facture !"
     )
 
 @bot.message_handler(content_types=['photo'])
